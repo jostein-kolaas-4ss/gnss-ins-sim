@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="gnss-ins-sim",
-    version="2.1",
+    version="2.1_4ss",
     author="Aceinna",
     author_email="xgdong@aceinna.com",
     description="GNSS-INS-SIM is an GNSS/INS simulation project, "
@@ -13,8 +13,11 @@ setuptools.setup(
         "GPS output, odometer output and magnetometer output.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Aceinna/gnss-ins-sim",
+    url="https://github.com/jostein-kolaas-4ss/gnss-ins-sim/",
     packages=setuptools.find_packages(),
+    package_data={
+         "": ["*.COF"]
+    },
     classifiers=[
         'Development Status :: 5 - Production/Stable',
         "Programming Language :: Python :: 2.7",

@@ -18,6 +18,7 @@ from ..attitude import attitude
 from ..geoparams import geoparams
 from ..geoparams import geomag
 from ..psd import time_series_from_psd
+# from colorednoise import powerlaw_psd_gaussian
 
 # global
 VERSION = '1.0'
@@ -98,7 +99,7 @@ def path_gen(ini_pos_vel_att, motion_def, output_def, mobility, ref_frame=0, mag
     dt = 1.0 / sim_freq             # simulation period
 
     ### Path gen command filter to make trajectory smoother
-    alpha = 0.9                     # for the low pass filter of the motion commands
+    alpha = 0.0                     # for the low pass filter of the motion commands
     filt_a = alpha * np.eye(3)
     filt_b = (1-alpha) * np.eye(3)
     max_acc = mobility[0]           # 10.0m/s2, max acceleratoin
@@ -176,7 +177,7 @@ def path_gen(ini_pos_vel_att, motion_def, output_def, mobility, ref_frame=0, mag
     idx_low_freq = 0        # data index for gps, odo
     for i in range(0, motion_def.shape[0]):
         com_type = round(motion_def[i, 0])      # command type of this segment
-        gps_visibility = motion_def[i, 8]       # gps visibility       
+        gps_visibility = motion_def[i, 8]       # gps visibility
         # get command of this segment
         '''if i == 2:
             print("haha")'''
@@ -374,7 +375,7 @@ def calc_true_sensor_output(pos_n, vel_b, att, c_nb, vel_dot_b, att_dot, ref_fra
         gravity = np.array([0, 0, g])
         w_en_n[0] = vel_n[1] / rn_effective              # wN
         w_en_n[1] = -vel_n[0] / rm_effective             # wE
-        w_en_n[2] = -vel_n[1] * sl /cl / rn_effective    # wD
+        w_en_n[2] = -vel_n[1] * sl / cl / rn_effective   # wD
         w_ie_n[0] = w_ie * cl
         w_ie_n[2] = -w_ie * sl
     else:
@@ -472,7 +473,9 @@ def acc_gen(fs, ref_a, acc_err, vib_def=None):
     # static bias
     acc_bias = acc_err['b']
     # bias drift
-    acc_bias_drift = bias_drift(acc_err['b_corr'], acc_err['b_drift'], n, fs)
+    acc_bias_drift = bias_drift(acc_err['b_corr'], acc_err['b_drift'], n, fs, 0)
+    acc_arw = bias_drift(acc_err['arw_corr'], acc_err['arw'], n, fs, 1)
+
     # vibrating acceleration
     acc_vib = np.zeros((n, 3))
     if vib_def is not None:
@@ -496,9 +499,11 @@ def acc_gen(fs, ref_a, acc_err, vib_def=None):
     acc_noise[:, 0] = acc_err['vrw'][0] / math.sqrt(dt) * acc_noise[:, 0]
     acc_noise[:, 1] = acc_err['vrw'][1] / math.sqrt(dt) * acc_noise[:, 1]
     acc_noise[:, 2] = acc_err['vrw'][2] / math.sqrt(dt) * acc_noise[:, 2]
+
     # true + constant_bias + bias_drift + noise
-    a_mea = ref_a + acc_bias + acc_bias_drift + acc_noise + acc_vib
+    a_mea = ref_a + acc_bias + acc_bias_drift + acc_arw + acc_noise + acc_vib
     return a_mea
+
 
 def gyro_gen(fs, ref_w, gyro_err):
     """
@@ -520,17 +525,21 @@ def gyro_gen(fs, ref_w, gyro_err):
     # static bias
     gyro_bias = gyro_err['b']
     # bias drift Todo: first-order Gauss-Markov model
-    gyro_bias_drift = bias_drift(gyro_err['b_corr'], gyro_err['b_drift'], n, fs)
+    gyro_bias_drift = bias_drift(gyro_err['b_corr'], gyro_err['b_drift'], n, fs, 0)
+    gyro_bias_rate = bias_drift(gyro_err['b_rate_corr'], gyro_err['b_rate'], n, fs, 1)
+
     # gyroscope white noise
     gyro_noise = np.random.randn(n, 3)
     gyro_noise[:, 0] = gyro_err['arw'][0] / math.sqrt(dt) * gyro_noise[:, 0]
     gyro_noise[:, 1] = gyro_err['arw'][1] / math.sqrt(dt) * gyro_noise[:, 1]
     gyro_noise[:, 2] = gyro_err['arw'][2] / math.sqrt(dt) * gyro_noise[:, 2]
+
     # true + constant_bias + bias_drift + noise
-    w_mea = ref_w + gyro_bias + gyro_bias_drift + gyro_noise
+    w_mea = ref_w + gyro_bias + gyro_bias_drift + gyro_bias_rate + gyro_noise
     return w_mea
 
-def bias_drift(corr_time, drift, n, fs):
+
+def bias_drift(corr_time, drift, n, fs, exponent=0):
     """
     Bias drift (instability) model for accelerometers or gyroscope.
     If correlation time is valid (positive and finite), a first-order Gauss-Markov model is used.
@@ -543,21 +552,111 @@ def bias_drift(corr_time, drift, n, fs):
     Returns
         sensor_bias_drift: drift of sensor bias
     """
+
     # 3 axis
     sensor_bias_drift = np.zeros((n, 3))
     for i in range(0, 3):
         if not math.isinf(corr_time[i]):
             # First-order Gauss-Markov
             a = 1 - 1/fs/corr_time[i]
-            b = 1/fs*drift[i]
+            b = drift[i]*np.sqrt(1 - np.exp(-2/fs/corr_time[i]))
             #sensor_bias_drift[0, :] = np.random.randn(3) * drift
-            drift_noise = np.random.randn(n, 3)
+            drift_noise = fs**(-exponent/2) * _powerlaw_psd_gaussian(exponent, n)
             for j in range(1, n):
-                sensor_bias_drift[j, i] = a*sensor_bias_drift[j-1, i] + b*drift_noise[j-1, i]
+                sensor_bias_drift[j, i] = a*sensor_bias_drift[j-1, i] + b*drift_noise[j-1]
         else:
-            # normal distribution
-            sensor_bias_drift[:, i] = drift[i] * np.random.randn(n)
+            # add 1/f**exponent noise
+            sensor_bias_drift[:, i] = drift[i] * fs**(-exponent/2) \
+                * _powerlaw_psd_gaussian(exponent + 1, n)
+
     return sensor_bias_drift
+
+
+def _powerlaw_psd_gaussian(exponent, size, fmin=0):
+    """Gaussian (1/f)**beta noise.
+
+    Normalised to unit variance if exponent beta = 0
+    and 1/f**(beta+2) = integrate 1/f**beta
+
+    Parameters:
+    -----------
+    exponent : float
+        The power-spectrum of the generated noise is proportional to
+        S(f) = (1 / f)**beta
+        flicker / pink noise:   exponent beta = 1
+        brown noise:            exponent beta = 2
+        Furthermore, the autocorrelation decays proportional to lag**-gamma
+        with gamma = 1 - beta for 0 < beta < 1.
+        There may be finite-size issues for beta close to one.
+    shape : int or iterable
+        The output has the given shape, and the desired power spectrum in
+        the last coordinate. That is, the last dimension is taken as time,
+        and all other components are independent.
+    fmin : float, optional
+        Low-frequency cutoff.
+        Default: 0 corresponds to original paper. It is not actually
+        zero, but 1/samples.
+
+    Returns
+    -------
+    out : array
+        The samples.
+
+    Note:
+    modified from https://github.com/felixpatzelt/colorednoise
+
+    """
+
+    # Make sure size is a list so we can iterate it and assign to it.
+    try:
+        size = list(size)
+    except TypeError:
+        size = [size]
+
+    # The number of samples in each time series
+    samples = size[-1]
+
+    # Calculate Frequencies (we asume a sample rate of one)
+    # Use fft functions for real output (-> hermitian spectrum)
+    f = np.fft.rfftfreq(samples)
+
+    # Build scaling factors for all frequencies
+    s_scale = f
+    fmin = max(fmin, 1./samples) # Low frequency cutoff
+    ix = np.sum(s_scale < fmin)   # Index of the cutoff
+    if ix and ix < len(s_scale):
+        s_scale[:ix] = s_scale[ix]
+    s_scale = (2*np.pi*s_scale)**(-exponent/2.)
+
+    # Adjust size to generate one Fourier component per frequency
+    size[-1] = len(f)
+
+    # Add empty dimension(s) to broadcast s_scale along last
+    # dimension of generated random power + phase (below)
+    dims_to_add = len(size) - 1
+    s_scale = s_scale[(np.newaxis,) * dims_to_add + (Ellipsis,)]
+
+    # Generate scaled random power + phase
+    sr = np.random.normal(scale=s_scale, size=size)
+    si = np.random.normal(scale=s_scale, size=size)
+
+    # If the signal length is even, frequencies +/- 0.5 are equal
+    # so the coefficient must be real.
+    if not (samples % 2):
+        si[..., -1] = 0
+
+    # Regardless of signal length, the DC component must be real
+    si[..., 0] = 0
+
+    # Combine power + corrected phase to Fourier components
+    s  = sr + 1J * si
+
+    # Transform to real time series & scale to unit variance for exponent = 0
+    sigma = np.sqrt(2/samples)
+    y = np.fft.irfft(s, n=samples, axis=-1) / sigma
+
+    return y
+
 
 def gps_gen(ref_gps, gps_err, gps_type=0):
     '''
