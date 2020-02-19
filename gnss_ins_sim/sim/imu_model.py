@@ -79,12 +79,14 @@ class IMU(object):
                     'gyro_arw': gyro angle random walk, deg/rt-hr
                     'gyro_b_stability': gyro bias instability, deg/hr
                     'gyro_b_corr': gyro bias isntability correlation time, sec
-                    'gyro_b_rate': gyro rate random walk, deg/s/rt-hr                    
+                    'gyro_b_rate': gyro rate random walk, deg/hr/rt-hr
+                    'gyro_b_rate_corr': gyro rate correlation time, sec
                     'accel_b': accel bias, m/s2
                     'accel_vrw' : accel velocity random walk, m/s/rt-hr
                     'accel_b_stability': accel bias instability, m/s2
                     'accel_b_corr': accel bias isntability correlation time, sec
                     'accel_arw' : accel acceleration random walk m/s2/rt-hr
+                    'accel_arw_corr' : accel acceleration random walk correlation time, sec
                     'mag_si': soft iron, default is a 3x3 identity matrix.
                     'mag_hi': hard iron, default is 3x1 zero vector.
                     'mag_std': mag noise std.
@@ -139,22 +141,22 @@ class IMU(object):
                 # required parameters
                 self.gyro_err['b'] = accuracy['gyro_b'] * D2R / 3600.0
                 self.gyro_err['b_drift'] = accuracy['gyro_b_stability'] * D2R / 3600.0
-                self.gyro_err['arw'] = accuracy['gyro_arw'] * D2R / 60.0                
+                self.gyro_err['arw'] = accuracy['gyro_arw'] * D2R / 60.0
                 self.accel_err['b'] = accuracy['accel_b']
                 self.accel_err['b_drift'] = accuracy['accel_b_stability']
                 self.accel_err['vrw'] = accuracy['accel_vrw'] / 60.0
-                
+
                 if self.magnetometer:   # at least noise std should be specified
                     if 'mag_std' in accuracy:
                         self.mag_err['std'] = accuracy['mag_std']
                     else:
-                        raise ValueError('Magnetometer is enabled, ' +\
+                        raise ValueError('Magnetometer is enabled, ' + \
                                          'but its noise std is not specified.')
                 # optional parameters
                 self.gyro_err['b_rate'] = accuracy.get('gyro_b_rate', np.zeros(3)) * D2R / 3600.0 / 60
-                self.gyro_err['b_rate_corr'] = accuracy.get('gyro_b_rate_corr', np.ones(3)*np.inf)              
-                self.accel_err['arw'] = accuracy.get('accel_arw', np.zeros(3)) / 60.0                
-                self.accel_err['arw_corr'] = accuracy.get('accel_arw_corr', np.ones(3)*np.inf) 
+                self.gyro_err['b_rate_corr'] = accuracy.get('gyro_b_rate_corr', np.ones(3)*np.inf)
+                self.accel_err['arw'] = accuracy.get('accel_arw', np.zeros(3)) / 60.0
+                self.accel_err['arw_corr'] = accuracy.get('accel_arw_corr', np.ones(3)*np.inf)
 
                 if 'gyro_b_corr' in accuracy:
                     self.gyro_err['b_corr'] = accuracy['gyro_b_corr']
